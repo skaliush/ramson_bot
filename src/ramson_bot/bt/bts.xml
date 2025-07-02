@@ -1,0 +1,95 @@
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <!-- Основной узел восстановления с 6 попытками -->
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithRouteTracking">
+        <!-- Выбор контроллера для FollowPath -->
+        <ControllerSelector
+          selected_controller="{selected_controller}"
+          default_controller="FollowPath"
+          topic_name="controller_selector"/>
+        <!-- Выбор планировщика (не используется для Route Tracking) -->
+        <PlannerSelector
+          selected_planner="{selected_planner}"
+          default_planner="GridBased"
+          topic_name="planner_selector"/>
+
+        <!-- Блок вычисления и отслеживания маршрута -->
+        <RecoveryNode number_of_retries="1" name="ComputeAndTrackRoute">
+          <!-- <ComputeAndTrackRoute
+            start="{start}"
+            goal="{goal}"
+            use_poses="true"
+            use_start="true"
+            server_name="ComputeAndTrackRoute"
+            server_timeout="5000"
+            error_code_id="{compute_route_error_code}"
+            error_msg="{compute_route_error_msg}"/> -->
+        <ComputeAndTrackRoute
+            start="{start}"
+            goal="{goal}"
+            use_poses="{true}"
+            use_start="{true}"
+            server_name="/compute_and_track_route"
+            server_timeout="10"
+            error_code_id="{compute_route_error_code}"
+            error_msg="{compute_route_error_msg}"/>
+          <Sequence>
+            <WouldARouteRecoveryHelp error_code="{compute_route_error_code}"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-Context"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+        </RecoveryNode>
+
+        <!-- Блок следования по построенному пути -->
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath
+            path="{path}"
+            controller_id="{selected_controller}"
+            error_code_id="{follow_path_error_code}"
+            error_msg="{follow_path_error_msg}"/>
+          <Sequence>
+            <WouldAControllerRecoveryHelp error_code="{follow_path_error_code}"/>
+            <ClearEntireCostmap
+              name="ClearLocalCostmap-Context"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+          </Sequence>
+        </RecoveryNode>
+      </PipelineSequence>
+
+      <!-- Финальные recovery-действия при критических ошибках -->
+      <Sequence>
+        <Fallback>
+          <WouldAControllerRecoveryHelp error_code="{follow_path_error_code}"/>
+          <WouldAPlannerRecoveryHelp error_code="{compute_route_error_code}"/>
+        </Fallback>
+        <ReactiveFallback name="RecoveryFallback">
+          <GoalUpdated/>
+          <RoundRobin name="RecoveryActions">
+            <!-- Очищаем обе карты перед следующей попыткой -->
+            <Sequence name="ClearingActions">
+              <ClearEntireCostmap
+                name="ClearLocalCostmap-Subtree"
+                service_name="local_costmap/clear_entirely_local_costmap"/>
+              <ClearEntireCostmap
+                name="ClearGlobalCostmap-Subtree"
+                service_name="global_costmap/clear_entirely_global_costmap"/>
+            </Sequence>
+            <!-- Небольшая пауза перед откатом -->
+            <Wait
+              wait_duration="5.0"
+              error_code_id="{wait_error_code}"
+              error_msg="{wait_error_msg}"/>
+            <!-- Откат назад для выхода из застревания -->
+            <BackUp
+              backup_dist="0.30"
+              backup_speed="0.15"
+              error_code_id="{backup_error_code}"
+              error_msg="{backup_error_msg}"/>
+          </RoundRobin>
+        </ReactiveFallback>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
